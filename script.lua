@@ -7,31 +7,45 @@ if not isfile("words.txt") then
     end
 end
 
-local Words = {}
+-- Pre-indexed words by first letter for faster lookup
+local WordsByLetter = {}
+for i = 97, 122 do -- a-z
+    WordsByLetter[string.char(i)] = {}
+end
+
 if isfile("words.txt") then
     local content = readfile("words.txt")
     for w in content:gmatch("[^\r\n]+") do
-        table.insert(Words, w)
+        local firstLetter = w:sub(1,1):lower()
+        if WordsByLetter[firstLetter] then
+            table.insert(WordsByLetter[firstLetter], w:lower())
+        end
     end
 end
 
 local function SuggestWords(prefix, count)
+    if #prefix < 1 then return {} end
+    
     prefix = prefix:lower()
-    local possible = {}
-    for _, w in ipairs(Words) do
-        if w:sub(1, #prefix):lower() == prefix then
-            table.insert(possible, w)
-        end
-    end
+    local firstLetter = prefix:sub(1,1)
+    local wordList = WordsByLetter[firstLetter]
+    
+    if not wordList then return {} end
+    
     local results = {}
-    local used = {}
-    while #results < count and #results < #possible do
-        local r = math.random(1, #possible)
-        if not used[r] then
-            table.insert(results, possible[r])
-            used[r] = true
+    local prefixLen = #prefix
+    
+    -- Bezpośrednio zbieraj pasujące słowa (max count)
+    for i = 1, #wordList do
+        local w = wordList[i]
+        if w:sub(1, prefixLen) == prefix then
+            results[#results + 1] = w
+            if #results >= count then
+                break
+            end
         end
     end
+    
     return results
 end
 
@@ -123,7 +137,7 @@ local title = Instance.new("TextLabel", titleBar)
 title.Size = UDim2.new(1, -100, 0, 20)
 title.Position = UDim2.new(0, 48, 0, 8)
 title.BackgroundTransparency = 1
-title.Text = "Word Finder"
+title.Text = "Last Letter Suggestions Script"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 16
@@ -204,14 +218,14 @@ h.Font = Enum.Font.GothamMedium
 h.TextSize = 14
 h.TextXAlignment = Enum.TextXAlignment.Left
 
--- Focus effect
+-- Focus effect (simplified)
 h.Focused:Connect(function()
     h.Text = ""
-    game:GetService("TweenService"):Create(searchStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(100, 80, 200)}):Play()
+    searchStroke.Color = Color3.fromRGB(100, 80, 200)
 end)
 
 h.FocusLost:Connect(function()
-    game:GetService("TweenService"):Create(searchStroke, TweenInfo.new(0.2), {Color = Color3.fromRGB(60, 60, 80)}):Play()
+    searchStroke.Color = Color3.fromRGB(60, 60, 80)
 end)
 
 -- Results label
@@ -248,60 +262,70 @@ local uiList = Instance.new("UIListLayout", list)
 uiList.Padding = UDim.new(0, 4)
 uiList.SortOrder = Enum.SortOrder.LayoutOrder
 
-local function UpdateSuggestions()
+local lastUpdate = 0
+local debounceTime = 0.15
+
+local function ClearList()
     for _, child in ipairs(list:GetChildren()) do
         if child:IsA("TextButton") then
             child:Destroy()
         end
     end
+end
 
-    local text = h.Text
-    if #text < 1 then 
-        resultsLabel.Text = "Suggestions:"
-        return 
-    end
+local function UpdateSuggestions()
+    local currentTime = tick()
+    lastUpdate = currentTime
+    
+    -- Debounce - poczekaj chwilę przed aktualizacją
+    task.delay(debounceTime, function()
+        if lastUpdate ~= currentTime then return end -- Nowy input przyszedł, anuluj
+        
+        ClearList()
+        
+        local text = h.Text
+        if #text < 1 then 
+            resultsLabel.Text = "Suggestions:"
+            return 
+        end
 
-    local suggests = SuggestWords(text, 100)
-    resultsLabel.Text = "Suggestions: " .. #suggests .. " found"
+        local suggests = SuggestWords(text, 50) -- Zmniejszone z 100 do 50
+        resultsLabel.Text = "Suggestions: " .. #suggests .. " found"
 
-    for i, word in ipairs(suggests) do
-        local btn = Instance.new("TextButton", list)
-        btn.Name = "Word_" .. i
-        btn.Size = UDim2.new(1, -5, 0, 28)
-        btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.GothamMedium
-        btn.TextSize = 13
-        btn.Text = "  " .. word
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.AutoButtonColor = false
-        btn.Selectable = false
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-        
-        -- Hover effects
-        btn.MouseEnter:Connect(function()
-            game:GetService("TweenService"):Create(btn, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(100, 80, 200)
-            }):Play()
-        end)
-        
-        btn.MouseLeave:Connect(function()
-            game:GetService("TweenService"):Create(btn, TweenInfo.new(0.15), {
-                BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-            }):Play()
-        end)
-        
-        -- Copy to clipboard on click
-        btn.MouseButton1Click:Connect(function()
-            if setclipboard then
-                setclipboard(word)
-            end
-            btn.Text = "  ✓ Copied!"
-            btn.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
-            task.wait(0.5)
+        for i, word in ipairs(suggests) do
+            local btn = Instance.new("TextButton")
+            btn.Name = "Word_" .. i
+            btn.Size = UDim2.new(1, -5, 0, 26)
+            btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.Font = Enum.Font.GothamMedium
+            btn.TextSize = 13
             btn.Text = "  " .. word
-        end)
-    end
+            btn.TextXAlignment = Enum.TextXAlignment.Left
+            btn.AutoButtonColor = true
+            btn.Selectable = false
+            btn.BorderSizePixel = 0
+            btn.Parent = list
+            
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+            
+            -- Click to copy
+            btn.MouseButton1Click:Connect(function()
+                if setclipboard then
+                    setclipboard(word)
+                end
+                local originalText = btn.Text
+                btn.Text = "  ✓ Copied!"
+                btn.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
+                task.delay(0.4, function()
+                    if btn and btn.Parent then
+                        btn.Text = originalText
+                        btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+                    end
+                end)
+            end)
+        end
+    end)
 end
 
 h:GetPropertyChangedSignal("Text"):Connect(UpdateSuggestions)
